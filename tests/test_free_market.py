@@ -180,6 +180,76 @@ def test_sec_quarterly_eps_derives_q4_and_builds_ttm() -> None:
     assert result.loc[pd.Timestamp("2025-12-31"), "ttm_eps"] == 14.0
 
 
+def test_sec_quarterly_eps_normalizes_facts_before_and_after_stock_split() -> None:
+    entries = [
+        {
+            "start": "2021-01-01",
+            "end": "2021-03-31",
+            "val": 20.0,
+            "filed": "2021-04-20",
+            "form": "10-Q",
+        },
+        {
+            "start": "2021-04-01",
+            "end": "2021-06-30",
+            "val": 25.0,
+            "filed": "2021-07-20",
+            "form": "10-Q",
+        },
+        {
+            "start": "2021-07-01",
+            "end": "2021-09-30",
+            "val": 30.0,
+            "filed": "2021-10-20",
+            "form": "10-Q",
+        },
+        {
+            "start": "2021-01-01",
+            "end": "2021-12-31",
+            "val": 100.0,
+            "filed": "2022-02-15",
+            "form": "10-K",
+        },
+        {
+            "start": "2022-01-01",
+            "end": "2022-03-31",
+            "val": 24.0,
+            "filed": "2022-04-20",
+            "form": "10-Q",
+        },
+        {
+            "start": "2022-04-01",
+            "end": "2022-06-30",
+            "val": 1.3,
+            "filed": "2022-07-26",
+            "form": "10-Q",
+        },
+    ]
+    raw = {
+        "facts": {
+            "us-gaap": {
+                "EarningsPerShareDiluted": {"units": {"USD/shares": entries}},
+            }
+        }
+    }
+    splits = pd.Series([20.0], index=pd.to_datetime(["2022-07-18"]))
+
+    result = FreeMarketProvider._parse_sec_quarterly_eps(raw, splits)
+
+    assert result.loc[pd.Timestamp("2021-12-31"), "quarter_eps"] == 1.25
+    assert result.loc[pd.Timestamp("2021-12-31"), "ttm_eps"] == 5.0
+    assert result.loc[pd.Timestamp("2022-06-30"), "ttm_eps"] == 5.25
+
+    prices = pd.Series(
+        [100.0, 105.0],
+        index=pd.to_datetime(["2022-02-28", "2022-07-31"]),
+    )
+    percentile, samples = _historical_pe(prices, result, current_pe=15.0)
+
+    assert percentile == 0.0
+    assert samples == 2
+
+
 def test_china_quarterly_eps_converts_cumulative_values_to_ttm() -> None:
     income = pd.DataFrame(
         {

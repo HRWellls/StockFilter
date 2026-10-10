@@ -380,7 +380,7 @@ class FreeMarketProvider:
                     quarterly_eps = pd.DataFrame()
                     warning = "免费在线数据；基础价格硬条件未通过，已跳过财报下载。"
                 elif market == Market.US:
-                    annuals, quarterly_eps = self._sec_financials(symbol)
+                    annuals, quarterly_eps = self._sec_financials(symbol, history)
                     warning = "SEC 官方财报 + Yahoo 个人研究行情；历史 PE 每份季报披露月取一个 TTM 样本。"
                 else:
                     annuals, quarterly_eps = self._china_financials(symbol)
@@ -548,7 +548,9 @@ class FreeMarketProvider:
         }
         return self._sec_tickers
 
-    def _sec_financials(self, symbol: str) -> tuple[pd.DataFrame, pd.DataFrame]:
+    def _sec_financials(
+        self, symbol: str, history: pd.DataFrame
+    ) -> tuple[pd.DataFrame, pd.DataFrame]:
         mapping = self._sec_mapping()
         lookup = symbol.replace("-", ".").upper()
         cik = mapping.get(symbol.upper()) or mapping.get(lookup)
@@ -569,7 +571,12 @@ class FreeMarketProvider:
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(json.dumps(raw), encoding="utf-8")
             time.sleep(0.12)
-        return self._parse_sec_facts(raw), self._parse_sec_quarterly_eps(raw)
+        stock_splits = (
+            history["Stock Splits"]
+            if "Stock Splits" in history
+            else pd.Series(dtype=float)
+        )
+        return self._parse_sec_facts(raw), self._parse_sec_quarterly_eps(raw, stock_splits)
 
     @staticmethod
     def _parse_sec_facts(raw: dict[str, Any]) -> pd.DataFrame:
@@ -671,12 +678,16 @@ class FreeMarketProvider:
         return output.sort_index().tail(12)
 
     @staticmethod
-    def _parse_sec_quarterly_eps(raw: dict[str, Any]) -> pd.DataFrame:
+    def _parse_sec_quarterly_eps(
+        raw: dict[str, Any], stock_splits: Optional[pd.Series] = None
+    ) -> pd.DataFrame:
         """Build point-in-time TTM EPS observations from SEC 10-Q/10-K facts.
 
         SEC 10-Q EPS facts generally contain a stand-alone quarter as well as a
         year-to-date value. We retain 60-120 day facts, then derive fiscal Q4
         from the full-year 10-K less the preceding three stand-alone quarters.
+        Yahoo historical closes are split-adjusted, so every SEC EPS fact is
+        normalized to the latest share basis before quarters are combined.
         """
         gaap = raw.get("facts", {}).get("us-gaap", {})
         entries: list[dict[str, Any]] = []
@@ -712,6 +723,15 @@ class FreeMarketProvider:
             return pd.DataFrame(columns=["filed_date", "quarter_eps", "ttm_eps"])
 
         facts = pd.DataFrame(rows)
+        if stock_splits is not None and not stock_splits.empty:
+            splits = pd.to_numeric(stock_splits, errors="coerce").dropna()
+            splits = splits[splits > 0]
+            splits.index = pd.to_datetime(splits.index).tz_localize(None)
+            if not splits.empty:
+                facts["eps"] = [
+                    eps / float(splits.loc[splits.index > filed_date].prod())
+                    for eps, filed_date in zip(facts["eps"], facts["filed_date"])
+                ]
         quarter_facts = facts[
             facts["days"].between(60, 120) & facts["form"].isin(["10-Q", "10-K"])
         ]
