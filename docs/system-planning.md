@@ -115,13 +115,13 @@ max_drawdown = min(drawdown)
 
 #### 十年 PE 百分位
 
-取最近 10 年每月最后一个交易日的有效 TTM PE，共约 120 个样本：
+取最近 10 年每份季报披露当月最后一个交易日的有效 TTM PE，共约 40 个样本。TTM EPS 只由当时已经披露的最近四个单季 EPS 构成，每份季报只产生一个样本：
 
 ```text
 pe_percentile = count(historical_pe <= current_pe) / count(valid_historical_pe)
 ```
 
-默认要求 `pe_percentile <= 30%`。采用月末样本而不是所有交易日，可减少某段时间因交易日更多而被过度加权。历史 PE <= 0、缺失值和极端异常值不进入历史分布；有效样本少于 60 个月时直接判定该条件不通过。
+默认要求 `pe_percentile <= 30%`。按季报取样可避免同一份过期 EPS 被连续数月重复计权。历史 PE <= 0、缺失值和极端异常值不进入历史分布；有效样本少于 30 份季报时直接判定该条件不通过。
 
 #### 防止 PE 单指标失真
 
@@ -205,7 +205,7 @@ pe_percentile = count(historical_pe <= current_pe) / count(valid_historical_pe)
 | 20 日平均成交额 | >= 2,000 万美元 | >= 1 亿元人民币 |
 | TTM PE | > 0 且 <= 30 | > 0 且 <= 30 |
 | 十年 PE 百分位 | <= 30% | <= 30% |
-| PE 历史有效样本 | >= 60 个月 | >= 60 个月 |
+| PE 历史有效样本 | >= 30 份季报 | >= 30 份季报 |
 | 最近 10 年正利润年份 | >= 8 年 | >= 8 年 |
 | 5 年营业利润 CAGR | >= 3% | >= 3% |
 | 最新 TTM 营业利润 / 过去 3 年中位数 | >= 90% | >= 90% |
@@ -299,7 +299,7 @@ pe_percentile = count(historical_pe <= current_pe) / count(valid_historical_pe)
 - 同步时先在远端分别按普通公司 PE 和银行 PE 做基础预筛；银行纳入、房地产和其他不支持的金融行业排除，再对候选逐只计算十年指标；
 - 原始行情和财报响应缓存在 `data/cache/`，避免反复请求。
 
-免费模式没有商业数据源 SLA。历史 PE 使用财报披露后可得的年度 EPS 构造月度序列，是可复现的免费近似口径，并非商业数据商的逐日标准化 TTM PE。页面中的“基础候选数（非结果数）”是通过基础预筛并进入本地详细计算的数量，不代表最终入选数或交易所全部上市证券数。Massive、Tushare Pro 等仍保留为后续提高稳定性和口径精度的升级选项。
+免费模式没有商业数据源 SLA。历史 PE 使用每份季报披露后可得的最近四季 EPS，以披露当月最后一个交易日价格构造单个样本，是可复现的免费近似口径，并非商业数据商的逐日标准化 TTM PE。页面中的“基础候选数（非结果数）”是通过基础预筛并进入本地详细计算的数量，不代表最终入选数或交易所全部上市证券数。Massive、Tushare Pro 等仍保留为后续提高稳定性和口径精度的升级选项。
 
 #### 美股
 
@@ -413,7 +413,7 @@ universe:
   excluded_industries: [Insurance, REITs, Real Estate]
 valuation:
   pe_ttm: {enabled: true, min_exclusive: 0, max_inclusive: 30}
-  pe_10y_percentile: {enabled: true, max_inclusive: 0.30, min_samples: 60}
+  pe_10y_percentile: {enabled: true, max_inclusive: 0.30, min_samples: 30}
 growth:
   positive_profit_years_10y: {enabled: true, min: 8}
   operating_income_cagr_5y: {enabled: true, min: 0.03}

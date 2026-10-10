@@ -34,11 +34,11 @@ valuation:
   min_pe_exclusive: 0
   max_pe_inclusive: 30
   max_pe_percentile_10y: 0.30
-  min_pe_history_samples: 60
+  min_pe_history_samples: 30
 bank:
   max_pe_inclusive: 12
   max_pe_percentile_10y: 0.30
-  min_pe_history_samples: 60
+  min_pe_history_samples: 30
   max_pb_inclusive: 1.50
   max_pb_percentile_10y: 0.40
   min_pb_history_samples: 60

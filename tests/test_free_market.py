@@ -1,6 +1,6 @@
 import pandas as pd
 
-from stockfilter.data.free_market import FreeMarketProvider, _history_metrics
+from stockfilter.data.free_market import FreeMarketProvider, _historical_pe, _history_metrics
 
 
 def test_history_metrics_separate_total_return_and_pe_prices() -> None:
@@ -119,3 +119,80 @@ def test_sec_parser_accepts_current_nonoperating_interest_tag() -> None:
     result = FreeMarketProvider._parse_sec_facts(raw)
 
     assert result.loc[pd.Timestamp("2025-12-31"), "interest"] == 292_000_000
+
+
+def test_historical_pe_uses_one_sample_per_quarterly_filing_month() -> None:
+    prices = pd.Series(
+        [100.0, 200.0, 300.0, 400.0],
+        index=pd.to_datetime(["2025-01-31", "2025-04-30", "2025-07-31", "2025-10-31"]),
+    )
+    quarterly_eps = pd.DataFrame(
+        {
+            "filed_date": pd.to_datetime(
+                ["2025-01-20", "2025-04-20", "2025-07-20", "2025-10-20"]
+            ),
+            "ttm_eps": [10.0, 10.0, 10.0, 10.0],
+        }
+    )
+
+    percentile, samples = _historical_pe(prices, quarterly_eps, current_pe=25.0)
+
+    assert percentile == 0.5
+    assert samples == 4
+
+
+def test_sec_quarterly_eps_derives_q4_and_builds_ttm() -> None:
+    entries = []
+    for year, values in ((2024, [1.0, 2.0, 3.0, 10.0]), (2025, [2.0, 3.0, 4.0, 14.0])):
+        for month, value in zip((3, 6, 9), values[:3]):
+            start_month = month - 2
+            entries.append(
+                {
+                    "start": f"{year}-{start_month:02d}-01",
+                    "end": f"{year}-{month:02d}-30",
+                    "val": value,
+                    "filed": f"{year}-{month + 1:02d}-20",
+                    "form": "10-Q",
+                }
+            )
+        entries.append(
+            {
+                "start": f"{year}-01-01",
+                "end": f"{year}-12-31",
+                "val": values[3],
+                "filed": f"{year + 1}-02-15",
+                "form": "10-K",
+            }
+        )
+    raw = {
+        "facts": {
+            "us-gaap": {
+                "EarningsPerShareDiluted": {"units": {"USD/shares": entries}},
+            }
+        }
+    }
+
+    result = FreeMarketProvider._parse_sec_quarterly_eps(raw)
+
+    assert result.loc[pd.Timestamp("2024-12-31"), "quarter_eps"] == 4.0
+    assert result.loc[pd.Timestamp("2024-12-31"), "ttm_eps"] == 10.0
+    assert result.loc[pd.Timestamp("2025-12-31"), "quarter_eps"] == 5.0
+    assert result.loc[pd.Timestamp("2025-12-31"), "ttm_eps"] == 14.0
+
+
+def test_china_quarterly_eps_converts_cumulative_values_to_ttm() -> None:
+    income = pd.DataFrame(
+        {
+            "报告日": [
+                "20240331", "20240630", "20240930", "20241231",
+                "20250331", "20250630", "20250930", "20251231",
+            ],
+            "稀释每股收益": [1.0, 3.0, 6.0, 10.0, 2.0, 5.0, 9.0, 14.0],
+        }
+    )
+
+    result = FreeMarketProvider._parse_china_quarterly_eps({"利润表": income})
+
+    assert result.loc[pd.Timestamp("2024-12-31"), "ttm_eps"] == 10.0
+    assert result.loc[pd.Timestamp("2025-12-31"), "quarter_eps"] == 5.0
+    assert result.loc[pd.Timestamp("2025-12-31"), "ttm_eps"] == 14.0

@@ -95,29 +95,30 @@ def _history_metrics(history: pd.DataFrame) -> dict[str, Any]:
     }
 
 
-def _historical_pe(prices: pd.Series, annuals: pd.DataFrame, current_pe: Optional[float]) -> tuple[Optional[float], int]:
-    if current_pe is None or current_pe <= 0 or annuals.empty or "eps" not in annuals:
+def _historical_pe(
+    prices: pd.Series, quarterly_eps: pd.DataFrame, current_pe: Optional[float]
+) -> tuple[Optional[float], int]:
+    """Rank current PE against one point-in-time TTM PE per quarterly filing."""
+    required = {"filed_date", "ttm_eps"}
+    if (
+        current_pe is None
+        or current_pe <= 0
+        or prices.empty
+        or quarterly_eps.empty
+        or not required.issubset(quarterly_eps.columns)
+    ):
         return None, 0
-    reports = annuals.dropna(subset=["eps"]).copy()
+    reports = quarterly_eps.dropna(subset=["filed_date", "ttm_eps"]).copy()
+    reports["filed_date"] = pd.to_datetime(reports["filed_date"]).dt.tz_localize(None)
+    reports = reports[reports["ttm_eps"] > 0]
     if reports.empty:
         return None, 0
-    if "filed_date" not in reports:
-        reports["filed_date"] = reports.index + pd.to_timedelta(120, unit="D")
-    reports = reports.sort_values("filed_date")
-    monthly = prices.resample("ME").last().to_frame("price")
-    monthly.index.name = "price_date"
-    monthly = monthly.reset_index()
-    reports.index.name = "period_end"
-    reports_reset = reports.reset_index()
-    reports_reset["filed_date"] = pd.to_datetime(reports_reset["filed_date"])
-    merged = pd.merge_asof(
-        monthly.sort_values("price_date"),
-        reports_reset[["filed_date", "eps"]].sort_values("filed_date"),
-        left_on="price_date",
-        right_on="filed_date",
-        direction="backward",
-    )
-    merged["pe"] = merged["price"] / merged["eps"]
+    monthly = prices.resample("ME").last().rename("price").to_frame()
+    monthly["filing_month"] = monthly.index.to_period("M")
+    reports["filing_month"] = reports["filed_date"].dt.to_period("M")
+    reports = reports.sort_values("filed_date").drop_duplicates("filing_month", keep="last")
+    merged = reports.merge(monthly.reset_index(drop=True), on="filing_month", how="inner")
+    merged["pe"] = merged["price"] / merged["ttm_eps"]
     valid = merged.loc[(merged["pe"] > 0) & np.isfinite(merged["pe"]), "pe"].tolist()
     return percentile_rank(current_pe, valid), len(valid)
 
@@ -158,6 +159,7 @@ def _calculate_snapshot(
     quote: dict[str, Any],
     history: pd.DataFrame,
     annuals: pd.DataFrame,
+    quarterly_eps: pd.DataFrame,
     source: str,
     warning: str,
 ) -> StockSnapshot:
@@ -169,7 +171,7 @@ def _calculate_snapshot(
     if not pe_prices.empty:
         pe_prices.index = pd.to_datetime(pe_prices.index).tz_localize(None)
     current_pe = _number(quote.get("trailingPE"))
-    pe_percentile, pe_samples = _historical_pe(pe_prices, annuals, current_pe)
+    pe_percentile, pe_samples = _historical_pe(pe_prices, quarterly_eps, current_pe)
     current_pb = _number(quote.get("priceToBook"))
     pb_percentile, pb_samples = _historical_pb(pe_prices, annuals, current_pb)
 
@@ -375,18 +377,23 @@ class FreeMarketProvider:
                 history_metrics = _history_metrics(history)
                 if self._fails_price_prefilter(quote, history_metrics):
                     annuals = pd.DataFrame()
+                    quarterly_eps = pd.DataFrame()
                     warning = "免费在线数据；基础价格硬条件未通过，已跳过财报下载。"
                 elif market == Market.US:
-                    annuals = self._sec_annuals(symbol)
-                    warning = "SEC 官方财报 + Yahoo 个人研究行情；历史估值采用年报数据在披露后延用。"
+                    annuals, quarterly_eps = self._sec_financials(symbol)
+                    warning = "SEC 官方财报 + Yahoo 个人研究行情；历史 PE 每份季报披露月取一个 TTM 样本。"
                 else:
-                    annuals = self._china_annuals(symbol)
+                    annuals, quarterly_eps = self._china_financials(symbol)
                     warning = (
-                        "新浪银行财报 + Yahoo 个人研究行情；使用银行专用指标。"
+                        "新浪银行财报 + Yahoo 个人研究行情；历史 PE 每份季报披露月取一个 TTM 样本。"
                         if quote.get("_is_bank")
-                        else "新浪财报 + Yahoo 个人研究行情；A 股 EBITDA 在缺少折旧时以 EBIT 保守近似。"
+                        else "新浪财报 + Yahoo 个人研究行情；历史 PE 采用季度 TTM 样本，A 股 EBITDA 在缺少折旧时以 EBIT 保守近似。"
                     )
-                records.append(_calculate_snapshot(market, quote, history, annuals, self.name, warning))
+                records.append(
+                    _calculate_snapshot(
+                        market, quote, history, annuals, quarterly_eps, self.name, warning
+                    )
+                )
             except Exception as exc:
                 records.append(self._failed_snapshot(market, quote, str(exc)))
             self.progress(index, total, f"已处理 {index}/{total}：{symbol}")
@@ -541,7 +548,7 @@ class FreeMarketProvider:
         }
         return self._sec_tickers
 
-    def _sec_annuals(self, symbol: str) -> pd.DataFrame:
+    def _sec_financials(self, symbol: str) -> tuple[pd.DataFrame, pd.DataFrame]:
         mapping = self._sec_mapping()
         lookup = symbol.replace("-", ".").upper()
         cik = mapping.get(symbol.upper()) or mapping.get(lookup)
@@ -562,7 +569,7 @@ class FreeMarketProvider:
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(json.dumps(raw), encoding="utf-8")
             time.sleep(0.12)
-        return self._parse_sec_facts(raw)
+        return self._parse_sec_facts(raw), self._parse_sec_quarterly_eps(raw)
 
     @staticmethod
     def _parse_sec_facts(raw: dict[str, Any]) -> pd.DataFrame:
@@ -663,7 +670,91 @@ class FreeMarketProvider:
             output["gross_margin"] = output["gross_margin"].fillna(output["operating_income"] / revenue)
         return output.sort_index().tail(12)
 
-    def _china_annuals(self, symbol: str) -> pd.DataFrame:
+    @staticmethod
+    def _parse_sec_quarterly_eps(raw: dict[str, Any]) -> pd.DataFrame:
+        """Build point-in-time TTM EPS observations from SEC 10-Q/10-K facts.
+
+        SEC 10-Q EPS facts generally contain a stand-alone quarter as well as a
+        year-to-date value. We retain 60-120 day facts, then derive fiscal Q4
+        from the full-year 10-K less the preceding three stand-alone quarters.
+        """
+        gaap = raw.get("facts", {}).get("us-gaap", {})
+        entries: list[dict[str, Any]] = []
+        for priority, tag in enumerate(
+            ("EarningsPerShareDiluted", "EarningsPerShareBasicAndDiluted")
+        ):
+            tag_entries = gaap.get(tag, {}).get("units", {}).get("USD/shares", [])
+            entries.extend({**entry, "_tag_priority": priority} for entry in tag_entries)
+        rows = []
+        for entry in entries:
+            if (
+                entry.get("form") not in {"10-Q", "10-K"}
+                or not entry.get("start")
+                or not entry.get("end")
+                or not entry.get("filed")
+                or entry.get("val") is None
+            ):
+                continue
+            start = pd.Timestamp(entry["start"])
+            end = pd.Timestamp(entry["end"])
+            rows.append(
+                {
+                    "period_start": start,
+                    "period_end": end,
+                    "filed_date": pd.Timestamp(entry["filed"]),
+                    "eps": float(entry["val"]),
+                    "days": (end - start).days,
+                    "form": entry["form"],
+                    "tag_priority": entry["_tag_priority"],
+                }
+            )
+        if not rows:
+            return pd.DataFrame(columns=["filed_date", "quarter_eps", "ttm_eps"])
+
+        facts = pd.DataFrame(rows)
+        quarter_facts = facts[
+            facts["days"].between(60, 120) & facts["form"].isin(["10-Q", "10-K"])
+        ]
+        quarter_facts = (
+            quarter_facts.sort_values(["period_end", "tag_priority", "filed_date"])
+            .drop_duplicates("period_end", keep="first")
+            .set_index("period_end")
+        )
+        annual_facts = facts[
+            facts["days"].between(250, 450) & facts["form"].eq("10-K")
+        ]
+        annual_facts = (
+            annual_facts.sort_values(["period_end", "tag_priority", "filed_date"])
+            .drop_duplicates("period_end", keep="first")
+            .set_index("period_end")
+        )
+
+        quarters = quarter_facts[["filed_date", "eps"]].rename(columns={"eps": "quarter_eps"})
+        derived = []
+        for period_end, annual in annual_facts.iterrows():
+            fiscal_quarters = quarter_facts.loc[
+                (quarter_facts.index > annual["period_start"])
+                & (quarter_facts.index < period_end)
+            ].tail(3)
+            if len(fiscal_quarters) != 3:
+                continue
+            derived.append(
+                {
+                    "period_end": period_end,
+                    "filed_date": annual["filed_date"],
+                    "quarter_eps": annual["eps"] - fiscal_quarters["eps"].sum(),
+                }
+            )
+        if derived:
+            q4 = pd.DataFrame(derived).set_index("period_end")
+            quarters = pd.concat([quarters, q4])
+        if quarters.empty:
+            return pd.DataFrame(columns=["filed_date", "quarter_eps", "ttm_eps"])
+        quarters = quarters.sort_index().loc[lambda frame: ~frame.index.duplicated(keep="first")]
+        quarters["ttm_eps"] = quarters["quarter_eps"].rolling(4, min_periods=4).sum()
+        return quarters.dropna(subset=["ttm_eps"]).tail(44)
+
+    def _china_financials(self, symbol: str) -> tuple[pd.DataFrame, pd.DataFrame]:
         code, exchange = symbol.split(".")
         sina_code = ("sh" if exchange == "SS" else "sz") + code
         frames: dict[str, pd.DataFrame] = {}
@@ -675,7 +766,47 @@ class FreeMarketProvider:
                 self._write_frame_cache(path, cached)
                 time.sleep(0.15)
             frames[report] = cached
-        return self._parse_china_statements(frames)
+        return self._parse_china_statements(frames), self._parse_china_quarterly_eps(frames)
+
+    @staticmethod
+    def _parse_china_quarterly_eps(frames: dict[str, pd.DataFrame]) -> pd.DataFrame:
+        """Convert cumulative A-share EPS reports into stand-alone quarters and TTM EPS."""
+        income = frames["利润表"].copy()
+        income["period_end"] = pd.to_datetime(
+            income["报告日"].astype(str), format="%Y%m%d", errors="coerce"
+        )
+        eps_column = next(
+            (name for name in ("稀释每股收益", "基本每股收益") if name in income), None
+        )
+        if eps_column is None:
+            return pd.DataFrame(columns=["filed_date", "quarter_eps", "ttm_eps"])
+        income["cumulative_eps"] = pd.to_numeric(income[eps_column], errors="coerce")
+        income = income.dropna(subset=["period_end", "cumulative_eps"]).sort_values("period_end")
+        income = income.drop_duplicates("period_end", keep="last")
+        if income.empty:
+            return pd.DataFrame(columns=["filed_date", "quarter_eps", "ttm_eps"])
+
+        filed_column = next(
+            (
+                name
+                for name in ("公告日期", "披露日期", "发布日期", "更新日期")
+                if name in income
+            ),
+            None,
+        )
+        if filed_column:
+            filed = pd.to_datetime(income[filed_column].astype(str), errors="coerce")
+        else:
+            offsets = income["period_end"].dt.month.map({3: 30, 6: 60, 9: 30, 12: 120})
+            filed = income["period_end"] + pd.to_timedelta(offsets, unit="D")
+        income["filed_date"] = filed
+        income["year"] = income["period_end"].dt.year
+        income["quarter_eps"] = income.groupby("year")["cumulative_eps"].diff()
+        first_in_year = income.groupby("year").cumcount().eq(0)
+        income.loc[first_in_year, "quarter_eps"] = income.loc[first_in_year, "cumulative_eps"]
+        income = income.set_index("period_end")
+        income["ttm_eps"] = income["quarter_eps"].rolling(4, min_periods=4).sum()
+        return income[["filed_date", "quarter_eps", "ttm_eps"]].dropna(subset=["ttm_eps"]).tail(44)
 
     @staticmethod
     def _parse_china_statements(frames: dict[str, pd.DataFrame]) -> pd.DataFrame:

@@ -140,7 +140,7 @@ def edit_config(market: Market) -> ScreenConfig:
             "十年 PE 百分位上限", v["max_pe_percentile_10y"], f"{prefix}_pe_pct"
         )
         v["min_pe_history_samples"] = st.number_input(
-            "PE 历史最少月样本",
+            "PE 历史最少季报样本",
             min_value=1,
             value=int(v["min_pe_history_samples"]),
             key=f"{prefix}_pe_samples",
@@ -203,7 +203,7 @@ def edit_config(market: Market) -> ScreenConfig:
             "银行十年 PE 百分位上限", b["max_pe_percentile_10y"], f"{prefix}_bank_pe_pct"
         )
         b["min_pe_history_samples"] = st.number_input(
-            "银行 PE 历史最少月样本", min_value=1,
+            "银行 PE 历史最少季报样本", min_value=1,
             value=int(b["min_pe_history_samples"]), key=f"{prefix}_bank_pe_samples"
         )
         b["max_pb_inclusive"] = st.number_input(

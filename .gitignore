@@ -8,3 +8,4 @@ data/*.duckdb
 data/cache/
 data/imports/*.csv
 exports/
+data/
