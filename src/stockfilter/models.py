@@ -23,6 +23,7 @@ class StockSnapshot(BaseModel):
     industry: str
     as_of_date: date
     source: str = "unknown"
+    is_bank: bool = False
     security_type: str = "common_stock"
     is_active: bool = True
     special_treatment: bool = False
@@ -33,7 +34,15 @@ class StockSnapshot(BaseModel):
     pe_ttm: Optional[float] = None
     pe_percentile_10y: Optional[float] = None
     pe_history_samples: Optional[int] = None
+    pb: Optional[float] = None
+    pb_percentile_10y: Optional[float] = None
+    pb_history_samples: Optional[int] = None
     positive_profit_years_10y: Optional[int] = None
+    net_income_cagr_5y: Optional[float] = None
+    net_income_slope_positive: Optional[bool] = None
+    latest_net_income_vs_3y_median: Optional[float] = None
+    book_value_per_share_cagr_5y: Optional[float] = None
+    book_value_per_share_slope_positive: Optional[bool] = None
     operating_income_cagr_5y: Optional[float] = None
     operating_income_slope_positive: Optional[bool] = None
     latest_operating_income_vs_3y_median: Optional[float] = None
@@ -53,6 +62,8 @@ class StockSnapshot(BaseModel):
     net_debt_ebitda: Optional[float] = None
     interest_coverage: Optional[float] = None
     diluted_share_cagr_5y: Optional[float] = None
+    loan_to_deposit_ratio: Optional[float] = None
+    allowance_to_loans: Optional[float] = None
 
     total_return_cagr_10y: Optional[float] = None
     total_return_slope_positive: Optional[bool] = None
@@ -100,6 +111,7 @@ class ScreenResult(BaseModel):
     industry: str
     as_of_date: date
     all_conditions_passed: bool
+    screening_branch: str = "ordinary"
     roe_status: str
     condition_results: List[ConditionResult]
     fail_reasons: List[str]
@@ -114,6 +126,7 @@ class ScreenResult(BaseModel):
             "industry": self.industry,
             "as_of_date": self.as_of_date,
             "passed": self.all_conditions_passed,
+            "screening_branch": self.screening_branch,
             "failed_conditions": len(self.fail_reasons),
             "roe_status": self.roe_status,
             "fail_reasons": "；".join(self.fail_reasons),

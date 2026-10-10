@@ -60,3 +60,62 @@ def test_parse_china_statements_builds_fcf_and_debt() -> None:
     assert result.iloc[-1]["fcf"] == 100
     assert result.iloc[-1]["debt"] == 90
     assert result.iloc[-1]["gross_margin"] > 0
+
+
+def test_parse_china_bank_statement_fields() -> None:
+    dates = ["20231231", "20241231", "20251231"]
+    balance = pd.DataFrame(
+        {
+            "报告日": dates,
+            "资产总计": [1000, 1100, 1200],
+            "股东权益": [80, 90, 100],
+            "股本": [10, 10, 10],
+            "发放贷款及垫款": [600, 650, 700],
+            "客户存款(吸收存款)": [800, 850, 900],
+            "减:贷款损失准备": [12, 13, 14],
+        }
+    )
+    income = pd.DataFrame(
+        {
+            "报告日": dates,
+            "营业收入": [50, 55, 60],
+            "营业利润": [20, 22, 24],
+            "净利润": [15, 16, 18],
+            "净利息收入": [30, 32, 35],
+            "业务及管理费用": [10, 11, 12],
+            "基本每股收益": [1.5, 1.6, 1.8],
+        }
+    )
+    cashflow = pd.DataFrame({"报告日": dates})
+
+    result = FreeMarketProvider._parse_china_statements(
+        {"资产负债表": balance, "利润表": income, "现金流量表": cashflow}
+    )
+
+    assert result.iloc[-1]["equity"] == 100
+    assert result.iloc[-1]["shares"] == 10
+    assert result.iloc[-1]["loans"] == 700
+    assert result.iloc[-1]["deposits"] == 900
+    assert result.iloc[-1]["allowance_for_loan_losses"] == 14
+
+
+def test_sec_parser_accepts_current_nonoperating_interest_tag() -> None:
+    entry = {
+        "start": "2025-01-01",
+        "end": "2025-12-31",
+        "val": 292_000_000,
+        "filed": "2026-02-13",
+        "form": "10-K",
+        "fp": "FY",
+    }
+    raw = {
+        "facts": {
+            "us-gaap": {
+                "InterestExpenseNonoperating": {"units": {"USD": [entry]}},
+            }
+        }
+    }
+
+    result = FreeMarketProvider._parse_sec_facts(raw)
+
+    assert result.loc[pd.Timestamp("2025-12-31"), "interest"] == 292_000_000

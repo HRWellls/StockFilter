@@ -38,6 +38,7 @@ def edit_config(market: Market) -> ScreenConfig:
     u = data["universe"]
     q = data["quality"]
     v = data["valuation"]
+    b = data["bank"]
     prefix = market.value.lower()
 
     st.sidebar.markdown(f"### {'美股' if market == Market.US else 'A 股'}参数")
@@ -70,6 +71,28 @@ def edit_config(market: Market) -> ScreenConfig:
         "positive_return_year_ratio_10y": "正收益年份占比",
         "gross_margin_std_5y": "毛利率稳定性",
         "max_drawdown_10y": "十年最大回撤",
+        "bank_pe_ttm": "银行 TTM PE",
+        "bank_pe_percentile_10y": "银行十年 PE 百分位",
+        "bank_pe_history_samples": "银行 PE 历史样本数",
+        "bank_pb": "银行 PB",
+        "bank_pb_percentile_10y": "银行十年 PB 百分位",
+        "bank_pb_history_samples": "银行 PB 历史样本数",
+        "bank_positive_profit_years_10y": "银行正利润年份",
+        "bank_net_income_cagr_5y": "银行净利润 CAGR",
+        "bank_net_income_slope_positive": "银行净利润斜率",
+        "bank_latest_net_income_vs_3y_median": "银行最新净利润水平",
+        "bank_book_value_per_share_cagr_5y": "银行每股净资产 CAGR",
+        "bank_book_value_per_share_slope_positive": "银行每股净资产斜率",
+        "bank_roe": "银行 ROE",
+        "bank_roa": "银行 ROA",
+        "bank_equity_asset_ratio": "银行权益/资产",
+        "bank_loan_to_deposit_ratio": "银行贷款/存款",
+        "bank_allowance_to_loans": "银行贷款损失准备/贷款",
+        "bank_diluted_share_cagr_5y": "银行股数增速",
+        "bank_total_return_cagr_10y": "银行十年总回报",
+        "bank_total_return_slope_positive": "银行总回报趋势",
+        "bank_positive_return_year_ratio_10y": "银行正收益年份占比",
+        "bank_max_drawdown_10y": "银行十年最大回撤",
     }
     with st.sidebar.expander("条件启停", expanded=False):
         enabled = st.multiselect(
@@ -169,6 +192,71 @@ def edit_config(market: Market) -> ScreenConfig:
         )
         q["max_diluted_share_cagr_5y"] = percent_input(
             "五年稀释股数 CAGR 上限", q["max_diluted_share_cagr_5y"], f"{prefix}_shares"
+        )
+
+    with st.sidebar.expander("银行专用硬条件", expanded=False):
+        st.caption("仅作用于银行；房地产仍排除。银行不使用 FCF、毛利率或净债务/EBITDA。")
+        b["max_pe_inclusive"] = st.number_input(
+            "银行 PE 上限", value=float(b["max_pe_inclusive"]), key=f"{prefix}_bank_pe"
+        )
+        b["max_pe_percentile_10y"] = percent_input(
+            "银行十年 PE 百分位上限", b["max_pe_percentile_10y"], f"{prefix}_bank_pe_pct"
+        )
+        b["min_pe_history_samples"] = st.number_input(
+            "银行 PE 历史最少月样本", min_value=1,
+            value=int(b["min_pe_history_samples"]), key=f"{prefix}_bank_pe_samples"
+        )
+        b["max_pb_inclusive"] = st.number_input(
+            "银行 PB 上限", value=float(b["max_pb_inclusive"]), step=0.1, key=f"{prefix}_bank_pb"
+        )
+        b["max_pb_percentile_10y"] = percent_input(
+            "银行十年 PB 百分位上限", b["max_pb_percentile_10y"], f"{prefix}_bank_pb_pct"
+        )
+        b["min_pb_history_samples"] = st.number_input(
+            "银行 PB 历史最少月样本", min_value=1,
+            value=int(b["min_pb_history_samples"]), key=f"{prefix}_bank_pb_samples"
+        )
+        b["min_positive_profit_years_10y"] = st.number_input(
+            "银行十年最少正利润年份", min_value=1, max_value=10,
+            value=int(b["min_positive_profit_years_10y"]), key=f"{prefix}_bank_profit_years"
+        )
+        b["min_net_income_cagr_5y"] = percent_input(
+            "银行五年净利润 CAGR 下限", b["min_net_income_cagr_5y"], f"{prefix}_bank_income_cagr"
+        )
+        b["min_latest_net_income_vs_3y_median"] = percent_input(
+            "银行最新净利润/三年中位数下限",
+            b["min_latest_net_income_vs_3y_median"], f"{prefix}_bank_income_median"
+        )
+        b["min_book_value_per_share_cagr_5y"] = percent_input(
+            "银行每股净资产 CAGR 下限",
+            b["min_book_value_per_share_cagr_5y"], f"{prefix}_bank_bvps_cagr"
+        )
+        b["min_roe"] = percent_input("银行 ROE 下限", b["min_roe"], f"{prefix}_bank_roe")
+        b["min_roa"] = percent_input("银行 ROA 下限", b["min_roa"], f"{prefix}_bank_roa", step=0.1)
+        b["min_equity_asset_ratio"] = percent_input(
+            "银行权益/资产下限", b["min_equity_asset_ratio"], f"{prefix}_bank_equity_assets"
+        )
+        b["max_loan_to_deposit_ratio"] = percent_input(
+            "银行贷款/存款上限", b["max_loan_to_deposit_ratio"], f"{prefix}_bank_loan_deposit"
+        )
+        b["min_allowance_to_loans"] = percent_input(
+            "银行贷款损失准备/贷款下限",
+            b["min_allowance_to_loans"], f"{prefix}_bank_allowance", step=0.1
+        )
+        b["max_diluted_share_cagr_5y"] = percent_input(
+            "银行五年稀释股数 CAGR 上限",
+            b["max_diluted_share_cagr_5y"], f"{prefix}_bank_shares"
+        )
+        b["min_total_return_cagr_10y"] = percent_input(
+            "银行十年总回报 CAGR 下限",
+            b["min_total_return_cagr_10y"], f"{prefix}_bank_return"
+        )
+        b["min_positive_return_year_ratio_10y"] = percent_input(
+            "银行十年正收益年份占比下限",
+            b["min_positive_return_year_ratio_10y"], f"{prefix}_bank_positive_years"
+        )
+        b["max_drawdown_10y"] = percent_input(
+            "银行十年最大回撤上限", b["max_drawdown_10y"], f"{prefix}_bank_drawdown"
         )
 
     with st.sidebar.expander("长期表现和数据质量", expanded=False):

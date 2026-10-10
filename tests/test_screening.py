@@ -53,3 +53,59 @@ def test_normal_equity_uses_roe_path() -> None:
 
     assert result.all_conditions_passed is True
     assert result.roe_status == "ROE_MEANINGFUL"
+
+
+def _bank_snapshot(market: Market):
+    stock = DemoProvider().fetch(market)[0]
+    return stock.model_copy(
+        update={
+            "is_bank": True,
+            "industry": "银行",
+            "pe_ttm": 10.0,
+            "pe_percentile_10y": 0.20,
+            "pe_history_samples": 120,
+            "pb": 1.2,
+            "pb_percentile_10y": 0.80,
+            "pb_history_samples": 120,
+            "positive_profit_years_10y": 10,
+            "net_income_cagr_5y": 0.05,
+            "net_income_slope_positive": True,
+            "latest_net_income_vs_3y_median": 1.05,
+            "book_value_per_share_cagr_5y": 0.04,
+            "book_value_per_share_slope_positive": True,
+            "average_equity": 80_000_000_000,
+            "average_assets": 1_000_000_000_000,
+            "equity_asset_ratio": 0.08,
+            "roe": 0.12,
+            "roa": 0.01,
+            "loan_to_deposit_ratio": 0.75,
+            "allowance_to_loans": 0.02,
+            "diluted_share_cagr_5y": 0.00,
+            "total_return_cagr_10y": 0.08,
+            "total_return_slope_positive": True,
+            "positive_return_year_ratio_10y": 0.60,
+            "max_drawdown_10y": 0.50,
+            "data_completeness": 1.0,
+        }
+    )
+
+
+def test_bank_uses_dedicated_hard_condition_branch() -> None:
+    result = ScreeningEngine(load_config(Market.US)).screen(_bank_snapshot(Market.US))
+
+    keys = {item.key for item in result.condition_results}
+    assert result.all_conditions_passed is True
+    assert result.roe_status == "BANK_ROE"
+    assert "bank_loan_to_deposit_ratio" in keys
+    assert "net_debt_ebitda" not in keys
+    assert "cash_conversion_5y" not in keys
+    assert "bank_pb_percentile_10y" not in keys
+
+
+def test_china_bank_has_lower_absolute_pe_cap() -> None:
+    stock = _bank_snapshot(Market.CN).model_copy(update={"pe_ttm": 13.0})
+    result = ScreeningEngine(load_config(Market.CN)).screen(stock)
+
+    condition = next(item for item in result.condition_results if item.key == "bank_pe_ttm")
+    assert condition.threshold == 12.0
+    assert condition.passed is False

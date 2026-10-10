@@ -78,7 +78,11 @@ class ScreeningEngine:
             stock.special_treatment is False,
         )
         industry_lower = stock.industry.casefold()
-        excluded = [item for item in universe.excluded_industries if item.casefold() in industry_lower]
+        excluded = (
+            []
+            if stock.is_bank
+            else [item for item in universe.excluded_industries if item.casefold() in industry_lower]
+        )
         add(
             "industry",
             "行业未被排除",
@@ -111,6 +115,165 @@ class ScreeningEngine:
             True,
             stock.latest_financial_period_available is True,
         )
+
+        if stock.is_bank:
+            bank = self.config.bank
+            add(
+                "bank_pe_ttm",
+                "银行 TTM PE",
+                stock.pe_ttm,
+                f"> {valuation.min_pe_exclusive} and <=",
+                bank.max_pe_inclusive,
+                stock.pe_ttm is not None
+                and stock.pe_ttm > valuation.min_pe_exclusive
+                and stock.pe_ttm <= bank.max_pe_inclusive,
+            )
+            le(
+                "bank_pe_percentile_10y",
+                "银行十年 PE 百分位",
+                stock.pe_percentile_10y,
+                bank.max_pe_percentile_10y,
+            )
+            ge(
+                "bank_pe_history_samples",
+                "银行 PE 历史有效样本数",
+                stock.pe_history_samples,
+                bank.min_pe_history_samples,
+            )
+            add(
+                "bank_pb",
+                "银行 PB",
+                stock.pb,
+                "> 0 and <=",
+                bank.max_pb_inclusive,
+                stock.pb is not None and 0 < stock.pb <= bank.max_pb_inclusive,
+            )
+            le(
+                "bank_pb_percentile_10y",
+                "银行十年 PB 百分位",
+                stock.pb_percentile_10y,
+                bank.max_pb_percentile_10y,
+            )
+            ge(
+                "bank_pb_history_samples",
+                "银行 PB 历史有效样本数",
+                stock.pb_history_samples,
+                bank.min_pb_history_samples,
+            )
+            ge(
+                "bank_positive_profit_years_10y",
+                "银行十年正利润年份数",
+                stock.positive_profit_years_10y,
+                bank.min_positive_profit_years_10y,
+            )
+            ge(
+                "bank_net_income_cagr_5y",
+                "银行五年净利润 CAGR",
+                stock.net_income_cagr_5y,
+                bank.min_net_income_cagr_5y,
+            )
+            if bank.require_positive_net_income_slope:
+                add(
+                    "bank_net_income_slope_positive",
+                    "银行五年净利润回归斜率为正",
+                    stock.net_income_slope_positive,
+                    "==",
+                    True,
+                    stock.net_income_slope_positive is True,
+                )
+            ge(
+                "bank_latest_net_income_vs_3y_median",
+                "银行最新净利润/三年中位数",
+                stock.latest_net_income_vs_3y_median,
+                bank.min_latest_net_income_vs_3y_median,
+            )
+            ge(
+                "bank_book_value_per_share_cagr_5y",
+                "银行五年每股净资产 CAGR",
+                stock.book_value_per_share_cagr_5y,
+                bank.min_book_value_per_share_cagr_5y,
+            )
+            if bank.require_positive_book_value_per_share_slope:
+                add(
+                    "bank_book_value_per_share_slope_positive",
+                    "银行每股净资产回归斜率为正",
+                    stock.book_value_per_share_slope_positive,
+                    "==",
+                    True,
+                    stock.book_value_per_share_slope_positive is True,
+                )
+            ge("bank_roe", "银行 ROE", stock.roe, bank.min_roe)
+            ge("bank_roa", "银行 ROA", stock.roa, bank.min_roa)
+            ge(
+                "bank_equity_asset_ratio",
+                "银行权益/资产",
+                stock.equity_asset_ratio,
+                bank.min_equity_asset_ratio,
+            )
+            le(
+                "bank_loan_to_deposit_ratio",
+                "银行贷款/存款",
+                stock.loan_to_deposit_ratio,
+                bank.max_loan_to_deposit_ratio,
+            )
+            ge(
+                "bank_allowance_to_loans",
+                "银行贷款损失准备/贷款",
+                stock.allowance_to_loans,
+                bank.min_allowance_to_loans,
+            )
+            le(
+                "bank_diluted_share_cagr_5y",
+                "银行五年稀释后股数 CAGR",
+                stock.diluted_share_cagr_5y,
+                bank.max_diluted_share_cagr_5y,
+            )
+            ge(
+                "bank_total_return_cagr_10y",
+                "银行十年总回报 CAGR",
+                stock.total_return_cagr_10y,
+                bank.min_total_return_cagr_10y,
+            )
+            add(
+                "bank_total_return_slope_positive",
+                "银行总回报价格对数回归斜率为正",
+                stock.total_return_slope_positive,
+                "==",
+                True,
+                stock.total_return_slope_positive is True,
+            )
+            ge(
+                "bank_positive_return_year_ratio_10y",
+                "银行十年正收益年份占比",
+                stock.positive_return_year_ratio_10y,
+                bank.min_positive_return_year_ratio_10y,
+            )
+            le(
+                "bank_max_drawdown_10y",
+                "银行十年最大回撤",
+                stock.max_drawdown_10y,
+                bank.max_drawdown_10y,
+            )
+            failures = [
+                f"{item.label}：实际值 {item.actual}，要求 {item.operator} {item.threshold}"
+                for item in conditions
+                if not item.passed
+            ]
+            warnings = [stock.warning] if stock.warning else []
+            warnings.append("银行使用专用硬条件分支；不采用 FCF、毛利率、净债务/EBITDA。")
+            return ScreenResult(
+                market=stock.market,
+                symbol=stock.symbol,
+                name=stock.name,
+                industry=stock.industry,
+                as_of_date=stock.as_of_date,
+                all_conditions_passed=not failures,
+                screening_branch="bank",
+                roe_status="BANK_ROE",
+                condition_results=conditions,
+                fail_reasons=failures,
+                warnings=warnings,
+            )
 
         add(
             "pe_ttm",

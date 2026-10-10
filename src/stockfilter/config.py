@@ -53,6 +53,33 @@ class ValuationConfig(BaseModel):
     min_pe_history_samples: int
 
 
+class BankConfig(BaseModel):
+    """Hard-condition preset for deposit-taking banks."""
+
+    model_config = ConfigDict(extra="forbid")
+    max_pe_inclusive: float
+    max_pe_percentile_10y: float
+    min_pe_history_samples: int
+    max_pb_inclusive: float
+    max_pb_percentile_10y: float
+    min_pb_history_samples: int
+    min_positive_profit_years_10y: int
+    min_net_income_cagr_5y: float
+    require_positive_net_income_slope: bool
+    min_latest_net_income_vs_3y_median: float
+    min_book_value_per_share_cagr_5y: float
+    require_positive_book_value_per_share_slope: bool
+    min_roe: float
+    min_roa: float
+    min_equity_asset_ratio: float
+    max_loan_to_deposit_ratio: float
+    min_allowance_to_loans: float
+    max_diluted_share_cagr_5y: float
+    min_total_return_cagr_10y: float
+    min_positive_return_year_ratio_10y: float
+    max_drawdown_10y: float
+
+
 class ScreenConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
     name: str
@@ -61,6 +88,7 @@ class ScreenConfig(BaseModel):
     universe: UniverseConfig
     quality: QualityConfig
     valuation: ValuationConfig
+    bank: BankConfig
 
 
 def project_root() -> Path:

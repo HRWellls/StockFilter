@@ -122,6 +122,37 @@ def _historical_pe(prices: pd.Series, annuals: pd.DataFrame, current_pe: Optiona
     return percentile_rank(current_pe, valid), len(valid)
 
 
+def _historical_pb(
+    prices: pd.Series, annuals: pd.DataFrame, current_pb: Optional[float]
+) -> tuple[Optional[float], int]:
+    if current_pb is None or current_pb <= 0 or annuals.empty:
+        return None, 0
+    if "equity" not in annuals or "shares" not in annuals:
+        return None, 0
+    reports = annuals.copy()
+    reports["book_value_per_share"] = reports["equity"] / reports["shares"]
+    reports = reports.replace([np.inf, -np.inf], np.nan).dropna(subset=["book_value_per_share"])
+    reports = reports[reports["book_value_per_share"] > 0]
+    if reports.empty:
+        return None, 0
+    if "filed_date" not in reports:
+        reports["filed_date"] = reports.index + pd.to_timedelta(120, unit="D")
+    monthly = prices.resample("ME").last().to_frame("price")
+    monthly.index.name = "price_date"
+    monthly = monthly.reset_index()
+    reports["filed_date"] = pd.to_datetime(reports["filed_date"])
+    merged = pd.merge_asof(
+        monthly.sort_values("price_date"),
+        reports[["filed_date", "book_value_per_share"]].sort_values("filed_date"),
+        left_on="price_date",
+        right_on="filed_date",
+        direction="backward",
+    )
+    merged["pb"] = merged["price"] / merged["book_value_per_share"]
+    valid = merged.loc[(merged["pb"] > 0) & np.isfinite(merged["pb"]), "pb"].tolist()
+    return percentile_rank(current_pb, valid), len(valid)
+
+
 def _calculate_snapshot(
     market: Market,
     quote: dict[str, Any],
@@ -139,17 +170,25 @@ def _calculate_snapshot(
         pe_prices.index = pd.to_datetime(pe_prices.index).tz_localize(None)
     current_pe = _number(quote.get("trailingPE"))
     pe_percentile, pe_samples = _historical_pe(pe_prices, annuals, current_pe)
+    current_pb = _number(quote.get("priceToBook"))
+    pb_percentile, pb_samples = _historical_pb(pe_prices, annuals, current_pb)
 
     annuals = annuals.sort_index()
     recent_10 = annuals.tail(10)
     recent_6 = annuals.tail(6)
     recent_5 = annuals.tail(5)
     net_values = _latest_values(recent_10, "net_income", 10)
+    net_values_6 = _latest_values(recent_6, "net_income", 6)
     op_values = _latest_values(recent_6, "operating_income", 6)
     revenue_values = _latest_values(recent_6, "revenue", 6)
     fcf_values = _latest_values(recent_6, "fcf", 6)
     gross_margins = _latest_values(recent_5, "gross_margin", 5)
     share_values = _latest_values(recent_6, "shares", 6)
+    if "equity" in recent_6 and "shares" in recent_6:
+        bvps_series = (recent_6["equity"] / recent_6["shares"]).replace([np.inf, -np.inf], np.nan)
+        book_values_per_share = [float(value) for value in bvps_series.dropna() if value > 0]
+    else:
+        book_values_per_share = []
 
     latest = annuals.iloc[-1] if not annuals.empty else pd.Series(dtype=float)
     previous = annuals.iloc[-2] if len(annuals) >= 2 else pd.Series(dtype=float)
@@ -184,6 +223,8 @@ def _calculate_snapshot(
 
     previous_three_op = _latest_values(annuals.iloc[:-1], "operating_income", 3)
     op_median = float(np.median(previous_three_op)) if previous_three_op else None
+    previous_three_net = _latest_values(annuals.iloc[:-1], "net_income", 3)
+    net_median = float(np.median(previous_three_net)) if previous_three_net else None
     cfo_5 = _latest_values(recent_5, "cfo", 5)
     net_5 = _latest_values(recent_5, "net_income", 5)
     positive_trends = {
@@ -210,14 +251,38 @@ def _calculate_snapshot(
         _safe_div(net_debt, ebitda),
     ]
     completeness = sum(value is not None for value in values_for_completeness) / len(values_for_completeness)
+    is_bank = bool(quote.get("_is_bank", False))
+    loans = _number(latest.get("loans"))
+    deposits = _number(latest.get("deposits"))
+    allowance = _number(latest.get("allowance_for_loan_losses"))
+    if is_bank:
+        bank_values_for_completeness = [
+            current_pe,
+            pe_percentile,
+            current_pb,
+            pb_percentile,
+            market_cap,
+            history_data.get("listing_years"),
+            history_data.get("total_return_cagr_10y"),
+            _series_cagr(net_values_6),
+            _series_cagr(book_values_per_share),
+            _safe_div(net_income, average_equity),
+            _safe_div(net_income, average_assets),
+            _safe_div(loans, deposits),
+            _safe_div(allowance, loans),
+        ]
+        completeness = sum(value is not None for value in bank_values_for_completeness) / len(
+            bank_values_for_completeness
+        )
 
     return StockSnapshot(
         market=market,
         symbol=symbol,
         name=name,
-        industry=str(quote.get("sector") or "非金融/非房地产（Yahoo 预筛）"),
+        industry="银行" if is_bank else str(quote.get("sector") or "非金融/非房地产（Yahoo 预筛）"),
         as_of_date=as_of,
         source=source,
+        is_bank=is_bank,
         security_type="common_stock",
         is_active=True,
         special_treatment=name.upper().startswith(("ST ", "*ST")),
@@ -227,7 +292,15 @@ def _calculate_snapshot(
         pe_ttm=current_pe,
         pe_percentile_10y=pe_percentile,
         pe_history_samples=pe_samples,
+        pb=current_pb,
+        pb_percentile_10y=pb_percentile,
+        pb_history_samples=pb_samples,
         positive_profit_years_10y=sum(value > 0 for value in net_values) if net_values else None,
+        net_income_cagr_5y=_series_cagr(net_values_6),
+        net_income_slope_positive=linear_slope_positive(net_values_6),
+        latest_net_income_vs_3y_median=_safe_div(net_income, net_median),
+        book_value_per_share_cagr_5y=_series_cagr(book_values_per_share),
+        book_value_per_share_slope_positive=linear_slope_positive(book_values_per_share),
         operating_income_cagr_5y=_series_cagr(op_values),
         operating_income_slope_positive=linear_slope_positive(op_values),
         latest_operating_income_vs_3y_median=_safe_div(operating_income, op_median),
@@ -249,6 +322,8 @@ def _calculate_snapshot(
         net_debt_ebitda=_safe_div(net_debt, ebitda),
         interest_coverage=_safe_div(operating_income, abs(interest) if interest else None),
         diluted_share_cagr_5y=_series_cagr(share_values),
+        loan_to_deposit_ratio=_safe_div(loans, deposits),
+        allowance_to_loans=_safe_div(allowance, loans),
         total_return_cagr_10y=history_data.get("total_return_cagr_10y"),
         total_return_slope_positive=history_data.get("total_return_slope_positive"),
         positive_return_year_ratio_10y=history_data.get("positive_return_year_ratio_10y"),
@@ -303,10 +378,14 @@ class FreeMarketProvider:
                     warning = "免费在线数据；基础价格硬条件未通过，已跳过财报下载。"
                 elif market == Market.US:
                     annuals = self._sec_annuals(symbol)
-                    warning = "SEC 官方财报 + Yahoo 个人研究行情；历史 PE 采用年报 EPS 在披露后延用。"
+                    warning = "SEC 官方财报 + Yahoo 个人研究行情；历史估值采用年报数据在披露后延用。"
                 else:
                     annuals = self._china_annuals(symbol)
-                    warning = "新浪财报 + Yahoo 个人研究行情；A 股 EBITDA 在缺少折旧时以 EBIT 保守近似。"
+                    warning = (
+                        "新浪银行财报 + Yahoo 个人研究行情；使用银行专用指标。"
+                        if quote.get("_is_bank")
+                        else "新浪财报 + Yahoo 个人研究行情；A 股 EBITDA 在缺少折旧时以 EBIT 保守近似。"
+                    )
                 records.append(_calculate_snapshot(market, quote, history, annuals, self.name, warning))
             except Exception as exc:
                 records.append(self._failed_snapshot(market, quote, str(exc)))
@@ -318,23 +397,57 @@ class FreeMarketProvider:
         region = "us" if market == Market.US else "cn"
         universe = self.config.universe
         valuation = self.config.valuation
-        clauses = [
+        base_clauses = [
             yf.EquityQuery("eq", ["region", region]),
             yf.EquityQuery("is-in", ["exchange", *exchanges]),
         ]
         disabled = set(self.config.disabled_conditions)
+        ordinary_clauses = list(base_clauses)
         if "industry" not in disabled:
-            clauses.append(yf.EquityQuery("is-in", ["sector", *ALLOWED_SECTORS]))
+            ordinary_clauses.append(yf.EquityQuery("is-in", ["sector", *ALLOWED_SECTORS]))
         if "market_cap" not in disabled:
-            clauses.append(yf.EquityQuery("gte", ["intradaymarketcap", universe.min_market_cap]))
+            ordinary_clauses.append(
+                yf.EquityQuery("gte", ["intradaymarketcap", universe.min_market_cap])
+            )
         if "pe_ttm" not in disabled:
-            clauses.extend(
+            ordinary_clauses.extend(
                 [
                     yf.EquityQuery("gt", ["peratio.lasttwelvemonths", valuation.min_pe_exclusive]),
                     yf.EquityQuery("lte", ["peratio.lasttwelvemonths", valuation.max_pe_inclusive]),
                 ]
             )
-        query = yf.EquityQuery("and", clauses)
+
+        bank_clauses = list(base_clauses)
+        if market == Market.US:
+            bank_clauses.append(yf.EquityQuery("eq", ["peer_group", "Banks"]))
+        else:
+            bank_clauses.append(yf.EquityQuery("eq", ["sector", "Financial Services"]))
+        if "market_cap" not in disabled:
+            bank_clauses.append(yf.EquityQuery("gte", ["intradaymarketcap", universe.min_market_cap]))
+        if "bank_pe_ttm" not in disabled:
+            bank_clauses.extend(
+                [
+                    yf.EquityQuery("gt", ["peratio.lasttwelvemonths", 0]),
+                    yf.EquityQuery(
+                        "lte", ["peratio.lasttwelvemonths", self.config.bank.max_pe_inclusive]
+                    ),
+                ]
+            )
+
+        ordinary = self._run_yahoo_screen(yf.EquityQuery("and", ordinary_clauses))
+        banks = self._run_yahoo_screen(yf.EquityQuery("and", bank_clauses))
+        if market == Market.CN:
+            banks = [quote for quote in banks if self._is_china_bank_quote(quote)]
+        for quote in ordinary:
+            quote["_is_bank"] = False
+        for quote in banks:
+            quote["_is_bank"] = True
+        combined = {str(quote.get("symbol")): quote for quote in ordinary}
+        combined.update({str(quote.get("symbol")): quote for quote in banks})
+        return sorted(combined.values(), key=lambda quote: str(quote.get("symbol", "")))
+
+    @staticmethod
+    def _run_yahoo_screen(query: yf.EquityQuery) -> list[dict[str, Any]]:
         quotes: list[dict[str, Any]] = []
         offset = 0
         while True:
@@ -345,6 +458,14 @@ class FreeMarketProvider:
             if not page or offset >= int(response.get("total", offset)):
                 break
         return [quote for quote in quotes if quote.get("quoteType") in (None, "EQUITY")]
+
+    @staticmethod
+    def _is_china_bank_quote(quote: dict[str, Any]) -> bool:
+        symbol = str(quote.get("symbol", "")).upper()
+        name = str(quote.get("shortName") or quote.get("longName") or "").upper()
+        return symbol.startswith("000001.") or any(
+            marker in f" {name} " for marker in (" BANK ", " BANKING ", " BK ")
+        )
 
     def _price_history(self, symbol: str) -> pd.DataFrame:
         path = self.cache_root / "prices" / f"{symbol.replace('/', '_')}.json"
@@ -359,7 +480,9 @@ class FreeMarketProvider:
 
     def _fails_price_prefilter(self, quote: dict[str, Any], metrics: dict[str, Any]) -> bool:
         q = self.config.quality
+        b = self.config.bank
         u = self.config.universe
+        is_bank = bool(quote.get("_is_bank", False))
         price = _number(quote.get("regularMarketPrice"))
         volume = _number(quote.get("averageDailyVolume3Month"))
         turnover = price * volume if price is not None and volume is not None else None
@@ -369,22 +492,34 @@ class FreeMarketProvider:
             checks.append(metrics.get("listing_years") is not None and metrics["listing_years"] >= u.min_listing_years)
         if "avg_turnover_20d" not in disabled:
             checks.append(turnover is not None and turnover >= u.min_avg_turnover_20d)
-        if "total_return_cagr_10y" not in disabled:
+        return_key = "bank_total_return_cagr_10y" if is_bank else "total_return_cagr_10y"
+        min_return = b.min_total_return_cagr_10y if is_bank else q.min_total_return_cagr_10y
+        if return_key not in disabled:
             checks.append(
                 metrics.get("total_return_cagr_10y") is not None
-                and metrics["total_return_cagr_10y"] >= q.min_total_return_cagr_10y
+                and metrics["total_return_cagr_10y"] >= min_return
             )
         if "total_return_slope_positive" not in disabled:
             checks.append(metrics.get("total_return_slope_positive") is True)
-        if "positive_return_year_ratio_10y" not in disabled:
+        positive_years_key = (
+            "bank_positive_return_year_ratio_10y" if is_bank else "positive_return_year_ratio_10y"
+        )
+        min_positive_years = (
+            b.min_positive_return_year_ratio_10y
+            if is_bank
+            else q.min_positive_return_year_ratio_10y
+        )
+        if positive_years_key not in disabled:
             checks.append(
                 metrics.get("positive_return_year_ratio_10y") is not None
-                and metrics["positive_return_year_ratio_10y"] >= q.min_positive_return_year_ratio_10y
+                and metrics["positive_return_year_ratio_10y"] >= min_positive_years
             )
-        if "max_drawdown_10y" not in disabled:
+        drawdown_key = "bank_max_drawdown_10y" if is_bank else "max_drawdown_10y"
+        max_allowed_drawdown = b.max_drawdown_10y if is_bank else q.max_drawdown_10y
+        if drawdown_key not in disabled:
             checks.append(
                 metrics.get("max_drawdown_10y") is not None
-                and metrics["max_drawdown_10y"] <= q.max_drawdown_10y
+                and metrics["max_drawdown_10y"] <= max_allowed_drawdown
             )
         return not all(checks)
 
@@ -434,7 +569,7 @@ class FreeMarketProvider:
         gaap = raw.get("facts", {}).get("us-gaap", {})
 
         def fact(tags: list[str], unit: str, duration: bool) -> pd.DataFrame:
-            best = pd.DataFrame()
+            combined = pd.DataFrame()
             for tag in tags:
                 entries = gaap.get(tag, {}).get("units", {}).get(unit, [])
                 rows = []
@@ -456,9 +591,8 @@ class FreeMarketProvider:
                 frame["end"] = pd.to_datetime(frame["end"])
                 frame["filed"] = pd.to_datetime(frame["filed"])
                 frame = frame.sort_values("filed").drop_duplicates("end", keep="last").set_index("end")
-                if len(frame) > len(best):
-                    best = frame
-            return best
+                combined = frame if combined.empty else combined.combine_first(frame)
+            return combined.sort_index()
 
         specs = {
             "revenue": (["RevenueFromContractWithCustomerExcludingAssessedTax", "Revenues", "SalesRevenueNet"], "USD", True),
@@ -468,7 +602,11 @@ class FreeMarketProvider:
             "capex": (["PaymentsToAcquirePropertyPlantAndEquipment"], "USD", True),
             "gross_profit": (["GrossProfit"], "USD", True),
             "cost_of_revenue": (["CostOfGoodsAndServicesSold", "CostOfRevenue"], "USD", True),
-            "interest": (["InterestExpenseNonOperating", "InterestExpense"], "USD", True),
+            "interest": ([
+                "InterestExpenseNonoperating",
+                "InterestExpenseNonOperating",
+                "InterestExpense",
+            ], "USD", True),
             "tax": (["IncomeTaxExpenseBenefit"], "USD", True),
             "pretax": (["IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest", "IncomeLossFromContinuingOperationsBeforeIncomeTaxesMinorityInterestAndIncomeLossFromEquityMethodInvestments"], "USD", True),
             "depreciation": (["DepreciationDepletionAndAmortization", "DepreciationDepletionAndAmortizationPropertyPlantAndEquipment"], "USD", True),
@@ -479,6 +617,20 @@ class FreeMarketProvider:
             "cash": (["CashAndCashEquivalentsAtCarryingValue", "CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents"], "USD", False),
             "debt_current": (["LongTermDebtCurrent", "ShortTermBorrowings"], "USD", False),
             "debt_long": (["LongTermDebtNoncurrent", "LongTermDebt"], "USD", False),
+            "loans": ([
+                "FinancingReceivableExcludingAccruedInterestBeforeAllowanceForCreditLoss",
+                "LoansAndLeasesReceivableNetOfDeferredIncome",
+                "LoansAndLeasesReceivableNetReportedAmount",
+                "LoansReceivableNet",
+            ], "USD", False),
+            "deposits": (["Deposits"], "USD", False),
+            "allowance_for_loan_losses": ([
+                "FinancingReceivableAllowanceForCreditLossExcludingAccruedInterest",
+                "FinancingReceivableAllowanceForCreditLosses",
+                "LoansAndLeasesReceivableAllowance",
+            ], "USD", False),
+            "net_interest_income": (["InterestIncomeExpenseNet"], "USD", True),
+            "noninterest_expense": (["NoninterestExpense"], "USD", True),
         }
         output = pd.DataFrame()
         filed_dates: list[pd.Series] = []
@@ -556,9 +708,20 @@ class FreeMarketProvider:
         output["gross_profit"] = output["revenue"] - cost
         output["gross_margin"] = output["gross_profit"] / output["revenue"]
         output["assets"] = column(balance, ["资产总计"])
-        output["equity"] = column(balance, ["归属于母公司股东权益合计", "所有者权益(或股东权益)合计", "所有者权益"])
+        output["equity"] = column(balance, [
+            "归属于母公司股东权益合计",
+            "归属于母公司股东的权益",
+            "所有者权益(或股东权益)合计",
+            "所有者权益",
+            "股东权益",
+        ])
         output["cash"] = column(balance, ["货币资金"])
-        output["shares"] = column(balance, ["实收资本(或股本)"])
+        output["shares"] = column(balance, ["实收资本(或股本)", "股本"])
+        output["loans"] = column(balance, ["发放贷款及垫款", "发放贷款及垫款净额"])
+        output["deposits"] = column(balance, ["客户存款(吸收存款)", "吸收存款"])
+        output["allowance_for_loan_losses"] = column(balance, ["减:贷款损失准备", "贷款损失准备"]).abs()
+        output["net_interest_income"] = column(income, ["净利息收入"])
+        output["noninterest_expense"] = column(income, ["业务及管理费用", "营业支出"]).abs()
         debt_parts = [column(balance, [name]).fillna(0) for name in ("短期借款", "长期借款", "应付债券")]
         output["debt"] = sum(debt_parts)
         accumulated = column(balance, ["累计折旧"])
@@ -570,15 +733,18 @@ class FreeMarketProvider:
         return output.sort_index().tail(12)
 
     def _failed_snapshot(self, market: Market, quote: dict[str, Any], error: str) -> StockSnapshot:
+        is_bank = bool(quote.get("_is_bank", False))
         return StockSnapshot(
             market=market,
             symbol=str(quote.get("symbol", "UNKNOWN")),
             name=str(quote.get("shortName") or quote.get("symbol", "UNKNOWN")),
-            industry="数据获取失败",
+            industry="银行（数据获取失败）" if is_bank else "数据获取失败",
             as_of_date=date.today(),
             source=self.name,
+            is_bank=is_bank,
             market_cap=_number(quote.get("marketCap")),
             pe_ttm=_number(quote.get("trailingPE")),
+            pb=_number(quote.get("priceToBook")),
             data_completeness=0,
             price_age_days=0,
             latest_financial_period_available=False,
