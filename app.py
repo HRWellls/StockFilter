@@ -18,6 +18,7 @@ from stockfilter.data.providers import csv_template
 from stockfilter.models import Market, ScreenResult
 from stockfilter.services import StockFilterService
 from stockfilter.storage import DuckDBStore
+from stockfilter.ui import symbol_matches_query
 
 ROOT = Path(__file__).resolve().parent
 
@@ -416,12 +417,12 @@ def show_results(market: Market, run_id: str, results: List[ScreenResult]) -> No
         key=f"show_rejected_{market.value}",
     )
     visible = [item for item in results if item.all_conditions_passed or show_rejected]
-    summary = pd.DataFrame([item.summary() for item in visible])
-    if not summary.empty:
+    all_visible_summary = pd.DataFrame([item.summary() for item in visible])
+    if not all_visible_summary.empty:
         # 同一失败条件数量内先分支、再行业分组；同行业按 PE 百分位升序。
-        summary = (
-            summary.assign(
-                _branch_order=summary["branch"].ne("bank").astype(int),
+        all_visible_summary = (
+            all_visible_summary.assign(
+                _branch_order=all_visible_summary["branch"].ne("bank").astype(int),
                 _industry=[item.industry.casefold() for item in visible],
                 _pe_percentile=[item.pe_percentile_10y for item in visible],
             )
@@ -444,9 +445,25 @@ def show_results(market: Market, run_id: str, results: List[ScreenResult]) -> No
         # Previously only the DataFrame was sorted, while `visible` retained the
         # service/database order, which was especially confusing in diagnostic mode.
         visible_by_symbol = {item.symbol: item for item in visible}
-        visible = [visible_by_symbol[symbol] for symbol in summary["symbol"]]
-    if summary.empty:
+        visible = [visible_by_symbol[symbol] for symbol in all_visible_summary["symbol"]]
+
+    table_query = st.text_input(
+        "在筛选结果中搜索标的代码",
+        placeholder="例如 GOOG（不区分大小写）",
+        key=f"result_symbol_search_{market.value}",
+    )
+    if all_visible_summary.empty:
+        summary = all_visible_summary
+    else:
+        matches = all_visible_summary["symbol"].map(
+            lambda symbol: symbol_matches_query(str(symbol), table_query)
+        )
+        summary = all_visible_summary.loc[matches].reset_index(drop=True)
+
+    if all_visible_summary.empty:
         st.info("本次没有股票通过全部硬条件。可开启上方诊断开关查看淘汰原因。")
+    elif summary.empty:
+        st.warning(f"未找到代码包含“{table_query.strip()}”的标的。")
     else:
         st.dataframe(summary, width="stretch", hide_index=True)
     st.download_button(
@@ -459,12 +476,25 @@ def show_results(market: Market, run_id: str, results: List[ScreenResult]) -> No
     if not visible:
         return
 
+    st.markdown("#### 逐项条件详情")
+    detail_query = st.text_input(
+        "搜索要查看详情的标的代码",
+        placeholder="例如 GOOG（不区分大小写）",
+        key=f"detail_symbol_search_{market.value}",
+    )
+    detail_candidates = [
+        item for item in visible if symbol_matches_query(item.symbol, detail_query)
+    ]
+    if not detail_candidates:
+        st.warning(f"未找到代码包含“{detail_query.strip()}”的标的。")
+        return
+
     selected_symbol = st.selectbox(
         "查看逐项条件",
-        [item.symbol for item in visible],
+        [item.symbol for item in detail_candidates],
         key=f"detail_{market.value}",
     )
-    selected = next(item for item in visible if item.symbol == selected_symbol)
+    selected = next(item for item in detail_candidates if item.symbol == selected_symbol)
     if selected.roe_status == "ROE_NOT_MEANINGFUL":
         st.warning("ROE 不适用：系统已执行 ROIC、ROA、FCF、杠杆、利息和股数替代路径。")
     for warning in selected.warnings:
