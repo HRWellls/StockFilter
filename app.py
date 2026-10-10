@@ -425,6 +425,11 @@ def show_results(market: Market, run_id: str, results: List[ScreenResult]) -> No
             .drop(columns=["_branch_order", "_industry", "_pe_percentile"])
             .reset_index(drop=True)
         )
+        # Keep the detail selector in exactly the same order as the summary table.
+        # Previously only the DataFrame was sorted, while `visible` retained the
+        # service/database order, which was especially confusing in diagnostic mode.
+        visible_by_symbol = {item.symbol: item for item in visible}
+        visible = [visible_by_symbol[symbol] for symbol in summary["symbol"]]
     if summary.empty:
         st.info("本次没有股票通过全部硬条件。可开启上方诊断开关查看淘汰原因。")
     else:
@@ -455,7 +460,7 @@ def show_results(market: Market, run_id: str, results: List[ScreenResult]) -> No
     st.dataframe(details, width="stretch", hide_index=True)
 
 
-st.title("长牛价值硬条件选股 · V3")
+st.title("长牛价值硬条件选股 · V4")
 st.caption("所有已配置条件必须全部通过；不使用评分、权重或自动交易。")
 
 with st.sidebar:
