@@ -109,3 +109,16 @@ def test_china_bank_has_lower_absolute_pe_cap() -> None:
     condition = next(item for item in result.condition_results if item.key == "bank_pe_ttm")
     assert condition.threshold == 12.0
     assert condition.passed is False
+
+
+def test_result_summary_contains_only_table_columns() -> None:
+    result = ScreeningEngine(load_config(Market.US)).screen(_bank_snapshot(Market.US))
+
+    assert result.pe_percentile_10y == 0.20
+    assert list(result.summary()) == [
+        "symbol",
+        "name",
+        "branch",
+        "passed",
+        "failed_conditions",
+    ]

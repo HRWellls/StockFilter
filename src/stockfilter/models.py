@@ -112,6 +112,7 @@ class ScreenResult(BaseModel):
     as_of_date: date
     all_conditions_passed: bool
     screening_branch: str = "ordinary"
+    pe_percentile_10y: Optional[float] = None
     roe_status: str
     condition_results: List[ConditionResult]
     fail_reasons: List[str]
@@ -120,14 +121,9 @@ class ScreenResult(BaseModel):
 
     def summary(self) -> Dict[str, Any]:
         return {
-            "market": self.market.value,
             "symbol": self.symbol,
             "name": self.name,
-            "industry": self.industry,
-            "as_of_date": self.as_of_date,
+            "branch": self.screening_branch,
             "passed": self.all_conditions_passed,
-            "screening_branch": self.screening_branch,
             "failed_conditions": len(self.fail_reasons),
-            "roe_status": self.roe_status,
-            "fail_reasons": "；".join(self.fail_reasons),
         }

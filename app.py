@@ -402,6 +402,29 @@ def show_results(market: Market, run_id: str, results: List[ScreenResult]) -> No
     )
     visible = [item for item in results if item.all_conditions_passed or show_rejected]
     summary = pd.DataFrame([item.summary() for item in visible])
+    if not summary.empty:
+        # 同一失败条件数量内先分支、再行业分组；同行业按 PE 百分位升序。
+        summary = (
+            summary.assign(
+                _branch_order=summary["branch"].ne("bank").astype(int),
+                _industry=[item.industry.casefold() for item in visible],
+                _pe_percentile=[item.pe_percentile_10y for item in visible],
+            )
+            .sort_values(
+                [
+                    "failed_conditions",
+                    "_branch_order",
+                    "_industry",
+                    "_pe_percentile",
+                    "symbol",
+                ],
+                ascending=[True, True, True, True, True],
+                kind="stable",
+                na_position="last",
+            )
+            .drop(columns=["_branch_order", "_industry", "_pe_percentile"])
+            .reset_index(drop=True)
+        )
     if summary.empty:
         st.info("本次没有股票通过全部硬条件。可开启上方诊断开关查看淘汰原因。")
     else:
@@ -432,7 +455,7 @@ def show_results(market: Market, run_id: str, results: List[ScreenResult]) -> No
     st.dataframe(details, width="stretch", hide_index=True)
 
 
-st.title("长牛价值硬条件选股 · V1")
+st.title("长牛价值硬条件选股 · V3")
 st.caption("所有已配置条件必须全部通过；不使用评分、权重或自动交易。")
 
 with st.sidebar:
