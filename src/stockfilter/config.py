@@ -103,6 +103,11 @@ def default_config_path(market: Market) -> Path:
     return project_root() / "config" / f"default_{suffix}.yaml"
 
 
+def ui_config_path(market: Market) -> Path:
+    suffix = "us" if market == Market.US else "cn"
+    return project_root() / "data" / f"ui_config_{suffix}.yaml"
+
+
 def load_config(market: Market, path: Optional[Path] = None) -> ScreenConfig:
     config_path = path or default_config_path(market)
     with config_path.open("r", encoding="utf-8") as handle:
@@ -111,3 +116,25 @@ def load_config(market: Market, path: Optional[Path] = None) -> ScreenConfig:
     if config.market != market:
         raise ValueError(f"配置市场 {config.market} 与请求市场 {market} 不一致")
     return config
+
+
+def load_ui_config(market: Market, path: Optional[Path] = None) -> ScreenConfig:
+    """Load persisted UI settings, falling back to the versioned defaults."""
+    config_path = path or ui_config_path(market)
+    return load_config(market, config_path) if config_path.exists() else load_config(market)
+
+
+def save_ui_config(config: ScreenConfig, path: Optional[Path] = None) -> None:
+    """Persist validated UI settings without modifying the versioned defaults."""
+    config_path = path or ui_config_path(config.market)
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    serialized = yaml.safe_dump(
+        config.model_dump(mode="json"), allow_unicode=True, sort_keys=False
+    )
+    if not config_path.exists() or config_path.read_text(encoding="utf-8") != serialized:
+        config_path.write_text(serialized, encoding="utf-8")
+
+
+def reset_ui_config(market: Market, path: Optional[Path] = None) -> None:
+    config_path = path or ui_config_path(market)
+    config_path.unlink(missing_ok=True)

@@ -1,4 +1,4 @@
-from stockfilter.config import load_config
+from stockfilter.config import load_config, load_ui_config, reset_ui_config, save_ui_config
 from stockfilter.data.providers import DemoProvider
 from stockfilter.models import Market
 from stockfilter.screening import ScreeningEngine
@@ -122,3 +122,19 @@ def test_result_summary_contains_only_table_columns() -> None:
         "passed",
         "failed_conditions",
     ]
+
+
+def test_ui_config_persists_and_can_be_reset(tmp_path) -> None:
+    path = tmp_path / "ui_config_us.yaml"
+    original = load_config(Market.US)
+    changed = original.model_copy(
+        update={
+            "valuation": original.valuation.model_copy(update={"max_pe_inclusive": 27.5})
+        }
+    )
+
+    save_ui_config(changed, path)
+
+    assert load_ui_config(Market.US, path).valuation.max_pe_inclusive == 27.5
+    reset_ui_config(Market.US, path)
+    assert not path.exists()

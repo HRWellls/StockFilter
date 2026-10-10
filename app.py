@@ -7,7 +7,13 @@ from typing import List
 import pandas as pd
 import streamlit as st
 
-from stockfilter.config import ScreenConfig, load_config
+from stockfilter.config import (
+    ScreenConfig,
+    load_ui_config,
+    reset_ui_config,
+    save_ui_config,
+    ui_config_path,
+)
 from stockfilter.data.providers import csv_template
 from stockfilter.models import Market, ScreenResult
 from stockfilter.services import StockFilterService
@@ -33,7 +39,7 @@ def percent_input(label: str, value: float, key: str, step: float = 0.5) -> floa
 
 
 def edit_config(market: Market) -> ScreenConfig:
-    base = load_config(market)
+    base = load_ui_config(market)
     data = base.model_dump(mode="python")
     u = data["universe"]
     q = data["quality"]
@@ -42,6 +48,13 @@ def edit_config(market: Market) -> ScreenConfig:
     prefix = market.value.lower()
 
     st.sidebar.markdown(f"### {'美股' if market == Market.US else 'A 股'}参数")
+    st.sidebar.caption(f"参数会自动保存到 {ui_config_path(market).name}")
+    if st.sidebar.button("恢复该市场默认参数", key=f"reset_config_{market.value}"):
+        reset_ui_config(market)
+        for key in list(st.session_state):
+            if key.startswith(f"{prefix}_"):
+                del st.session_state[key]
+        st.rerun()
     condition_labels = {
         "security_type": "证券类型",
         "is_active": "正常上市",
@@ -281,7 +294,9 @@ def edit_config(market: Market) -> ScreenConfig:
             value=int(q["max_price_age_days"]), key=f"{prefix}_age"
         )
 
-    return ScreenConfig.model_validate(data)
+    config = ScreenConfig.model_validate(data)
+    save_ui_config(config)
+    return config
 
 
 def source_controls(market: Market) -> tuple[str, Path, int, List[str]]:
@@ -465,7 +480,7 @@ st.caption("所有已配置条件必须全部通过；不使用评分、权重�
 
 with st.sidebar:
     st.header("参数设置")
-    st.caption("预设：default_v1。修改仅作用于本次筛选。")
+    st.caption("预设：default_v1。修改会自动保存到本地，并用于后续筛选。")
 
 us_config = edit_config(Market.US)
 cn_config = edit_config(Market.CN)
