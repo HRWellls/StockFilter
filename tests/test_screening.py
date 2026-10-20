@@ -26,6 +26,25 @@ def test_all_enabled_conditions_are_hard() -> None:
     assert any(item.key == "pe_ttm" and not item.passed for item in result.condition_results)
 
 
+def test_three_pe_percentile_windows_are_independent_hard_conditions() -> None:
+    config = load_config(Market.US)
+    stock = DemoProvider().fetch(Market.US)[0].model_copy(
+        update={
+            "pe_percentile_ytd": 0.31,
+            "pe_percentile_3y": 0.29,
+            "pe_percentile_10y": 0.24,
+        }
+    )
+
+    result = ScreeningEngine(config).screen(stock)
+    by_key = {item.key: item for item in result.condition_results}
+
+    assert by_key["pe_percentile_ytd"].passed is False
+    assert by_key["pe_percentile_3y"].passed is True
+    assert by_key["pe_percentile_10y"].passed is True
+    assert result.all_conditions_passed is False
+
+
 def test_disabled_condition_is_not_evaluated() -> None:
     config = load_config(Market.US).model_copy(update={"disabled_conditions": ["pe_ttm"]})
     stock = DemoProvider().fetch(Market.US)[0].model_copy(update={"pe_ttm": 31.0})

@@ -33,11 +33,15 @@ quality:
 valuation:
   min_pe_exclusive: 0
   max_pe_inclusive: 30
-  max_pe_percentile_10y: 0.30
+  max_pe_percentile_ytd: 0.30
+  max_pe_percentile_3y: 0.30
+  max_pe_percentile_10y: 0.25
   min_pe_history_samples: 30
 bank:
   max_pe_inclusive: 20
-  max_pe_percentile_10y: 0.30
+  max_pe_percentile_ytd: 0.30
+  max_pe_percentile_3y: 0.30
+  max_pe_percentile_10y: 0.25
   min_pe_history_samples: 30
   max_pb_inclusive: 3.0
   max_pb_percentile_10y: 0.40

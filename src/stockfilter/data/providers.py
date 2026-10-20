@@ -28,6 +28,8 @@ def _base(market: Market, symbol: str, name: str, industry: str) -> Dict[str, An
         "special_treatment": False,
         "listing_years": 20,
         "pe_history_samples": 120,
+        "pe_percentile_ytd": 0.20,
+        "pe_percentile_3y": 0.20,
         "positive_profit_years_10y": 10,
         "operating_income_cagr_5y": 0.06,
         "operating_income_slope_positive": True,

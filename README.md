@@ -28,7 +28,7 @@ uv run streamlit run app.py
 export STOCKFILTER_SEC_USER_AGENT="你的名字 your-email@example.com"
 ```
 
-免费数据的历史 PE 使用每份季报披露后可得的最近四季 EPS，并以披露当月最后一个交易日价格构造一个 TTM PE 样本；十年约 40 个样本，不等同于商业数据商清洗后的逐日 TTM PE。页面会显示这一口径提示。
+免费数据的历史 PE 使用每份季报披露后可得的最近四季 EPS，并以披露当月最后一个交易日价格构造一个 TTM PE 样本；分别计算今年、最近三年和最近十年的百分位。十年约 40 个样本，不等同于商业数据商清洗后的逐日 TTM PE。三个百分位上限均可在页面中独立调整。
 
 命令行验证：
 

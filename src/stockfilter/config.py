@@ -49,6 +49,8 @@ class ValuationConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
     min_pe_exclusive: float
     max_pe_inclusive: float
+    max_pe_percentile_ytd: float = 0.30
+    max_pe_percentile_3y: float = 0.30
     max_pe_percentile_10y: float
     min_pe_history_samples: int
 
@@ -58,6 +60,8 @@ class BankConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
     max_pe_inclusive: float
+    max_pe_percentile_ytd: float = 0.30
+    max_pe_percentile_3y: float = 0.30
     max_pe_percentile_10y: float
     min_pe_history_samples: int
     max_pb_inclusive: float

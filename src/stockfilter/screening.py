@@ -129,6 +129,18 @@ class ScreeningEngine:
                 and stock.pe_ttm <= bank.max_pe_inclusive,
             )
             le(
+                "bank_pe_percentile_ytd",
+                "银行今年 PE 百分位",
+                stock.pe_percentile_ytd,
+                bank.max_pe_percentile_ytd,
+            )
+            le(
+                "bank_pe_percentile_3y",
+                "银行三年 PE 百分位",
+                stock.pe_percentile_3y,
+                bank.max_pe_percentile_3y,
+            )
+            le(
                 "bank_pe_percentile_10y",
                 "银行十年 PE 百分位",
                 stock.pe_percentile_10y,
@@ -285,6 +297,18 @@ class ScreeningEngine:
             stock.pe_ttm is not None
             and stock.pe_ttm > valuation.min_pe_exclusive
             and stock.pe_ttm <= valuation.max_pe_inclusive,
+        )
+        le(
+            "pe_percentile_ytd",
+            "今年 PE 百分位",
+            stock.pe_percentile_ytd,
+            valuation.max_pe_percentile_ytd,
+        )
+        le(
+            "pe_percentile_3y",
+            "三年 PE 百分位",
+            stock.pe_percentile_3y,
+            valuation.max_pe_percentile_3y,
         )
         le(
             "pe_percentile_10y",

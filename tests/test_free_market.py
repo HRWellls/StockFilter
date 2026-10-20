@@ -141,6 +141,31 @@ def test_historical_pe_uses_one_sample_per_quarterly_filing_month() -> None:
     assert samples == 4
 
 
+def test_historical_pe_can_limit_samples_to_a_date_window() -> None:
+    prices = pd.Series(
+        [100.0, 200.0, 300.0, 400.0],
+        index=pd.to_datetime(["2022-01-31", "2023-01-31", "2024-01-31", "2025-01-31"]),
+    )
+    quarterly_eps = pd.DataFrame(
+        {
+            "filed_date": pd.to_datetime(
+                ["2022-01-20", "2023-01-20", "2024-01-20", "2025-01-20"]
+            ),
+            "ttm_eps": [10.0, 10.0, 10.0, 10.0],
+        }
+    )
+
+    percentile, samples = _historical_pe(
+        prices,
+        quarterly_eps,
+        current_pe=25.0,
+        start_date=pd.Timestamp("2023-01-01"),
+    )
+
+    assert percentile == 1 / 3
+    assert samples == 3
+
+
 def test_sec_quarterly_eps_derives_q4_and_builds_ttm() -> None:
     entries = []
     for year, values in ((2024, [1.0, 2.0, 3.0, 10.0]), (2025, [2.0, 3.0, 4.0, 14.0])):

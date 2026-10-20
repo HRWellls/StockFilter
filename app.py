@@ -68,6 +68,8 @@ def edit_config(market: Market) -> ScreenConfig:
         "price_age_days": "行情新鲜度",
         "latest_financial_period_available": "财务数据期间",
         "pe_ttm": "TTM PE",
+        "pe_percentile_ytd": "今年 PE 百分位",
+        "pe_percentile_3y": "三年 PE 百分位",
         "pe_percentile_10y": "十年 PE 百分位",
         "pe_history_samples": "PE 历史样本数",
         "positive_profit_years_10y": "正利润年份",
@@ -86,6 +88,8 @@ def edit_config(market: Market) -> ScreenConfig:
         "gross_margin_std_5y": "毛利率稳定性",
         "max_drawdown_10y": "十年最大回撤",
         "bank_pe_ttm": "银行 TTM PE",
+        "bank_pe_percentile_ytd": "银行今年 PE 百分位",
+        "bank_pe_percentile_3y": "银行三年 PE 百分位",
         "bank_pe_percentile_10y": "银行十年 PE 百分位",
         "bank_pe_history_samples": "银行 PE 历史样本数",
         "bank_pb": "银行 PB",
@@ -150,8 +154,14 @@ def edit_config(market: Market) -> ScreenConfig:
         v["max_pe_inclusive"] = st.number_input(
             "PE 上限（含）", value=float(v["max_pe_inclusive"]), key=f"{prefix}_pe_max"
         )
+        v["max_pe_percentile_ytd"] = percent_input(
+            "今年 PE 百分位上限", v["max_pe_percentile_ytd"], f"{prefix}_pe_pct_ytd"
+        )
+        v["max_pe_percentile_3y"] = percent_input(
+            "三年 PE 百分位上限", v["max_pe_percentile_3y"], f"{prefix}_pe_pct_3y"
+        )
         v["max_pe_percentile_10y"] = percent_input(
-            "十年 PE 百分位上限", v["max_pe_percentile_10y"], f"{prefix}_pe_pct"
+            "十年 PE 百分位上限", v["max_pe_percentile_10y"], f"{prefix}_pe_pct_10y"
         )
         v["min_pe_history_samples"] = st.number_input(
             "PE 历史最少季报样本",
@@ -213,8 +223,20 @@ def edit_config(market: Market) -> ScreenConfig:
         b["max_pe_inclusive"] = st.number_input(
             "银行 PE 上限", value=float(b["max_pe_inclusive"]), key=f"{prefix}_bank_pe"
         )
+        b["max_pe_percentile_ytd"] = percent_input(
+            "银行今年 PE 百分位上限",
+            b["max_pe_percentile_ytd"],
+            f"{prefix}_bank_pe_pct_ytd",
+        )
+        b["max_pe_percentile_3y"] = percent_input(
+            "银行三年 PE 百分位上限",
+            b["max_pe_percentile_3y"],
+            f"{prefix}_bank_pe_pct_3y",
+        )
         b["max_pe_percentile_10y"] = percent_input(
-            "银行十年 PE 百分位上限", b["max_pe_percentile_10y"], f"{prefix}_bank_pe_pct"
+            "银行十年 PE 百分位上限",
+            b["max_pe_percentile_10y"],
+            f"{prefix}_bank_pe_pct_10y",
         )
         b["min_pe_history_samples"] = st.number_input(
             "银行 PE 历史最少季报样本", min_value=1,

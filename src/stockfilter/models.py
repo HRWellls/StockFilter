@@ -32,6 +32,8 @@ class StockSnapshot(BaseModel):
     avg_turnover_20d: Optional[float] = None
 
     pe_ttm: Optional[float] = None
+    pe_percentile_ytd: Optional[float] = None
+    pe_percentile_3y: Optional[float] = None
     pe_percentile_10y: Optional[float] = None
     pe_history_samples: Optional[int] = None
     pb: Optional[float] = None

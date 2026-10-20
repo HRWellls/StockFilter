@@ -96,7 +96,10 @@ def _history_metrics(history: pd.DataFrame) -> dict[str, Any]:
 
 
 def _historical_pe(
-    prices: pd.Series, quarterly_eps: pd.DataFrame, current_pe: Optional[float]
+    prices: pd.Series,
+    quarterly_eps: pd.DataFrame,
+    current_pe: Optional[float],
+    start_date: Optional[pd.Timestamp] = None,
 ) -> tuple[Optional[float], int]:
     """Rank current PE against one point-in-time TTM PE per quarterly filing."""
     required = {"filed_date", "ttm_eps"}
@@ -114,10 +117,13 @@ def _historical_pe(
     if reports.empty:
         return None, 0
     monthly = prices.resample("ME").last().rename("price").to_frame()
+    monthly.index.name = "price_date"
     monthly["filing_month"] = monthly.index.to_period("M")
     reports["filing_month"] = reports["filed_date"].dt.to_period("M")
     reports = reports.sort_values("filed_date").drop_duplicates("filing_month", keep="last")
-    merged = reports.merge(monthly.reset_index(drop=True), on="filing_month", how="inner")
+    merged = reports.merge(monthly.reset_index(), on="filing_month", how="inner")
+    if start_date is not None:
+        merged = merged[merged["price_date"] >= pd.Timestamp(start_date)]
     merged["pe"] = merged["price"] / merged["ttm_eps"]
     valid = merged.loc[(merged["pe"] > 0) & np.isfinite(merged["pe"]), "pe"].tolist()
     return percentile_rank(current_pe, valid), len(valid)
@@ -172,6 +178,23 @@ def _calculate_snapshot(
         pe_prices.index = pd.to_datetime(pe_prices.index).tz_localize(None)
     current_pe = _number(quote.get("trailingPE"))
     pe_percentile, pe_samples = _historical_pe(pe_prices, quarterly_eps, current_pe)
+    if pe_prices.empty:
+        pe_percentile_3y = None
+        pe_percentile_ytd = None
+    else:
+        latest_price_date = pd.Timestamp(pe_prices.index.max())
+        pe_percentile_3y, _ = _historical_pe(
+            pe_prices,
+            quarterly_eps,
+            current_pe,
+            start_date=latest_price_date - pd.DateOffset(years=3),
+        )
+        pe_percentile_ytd, _ = _historical_pe(
+            pe_prices,
+            quarterly_eps,
+            current_pe,
+            start_date=pd.Timestamp(year=latest_price_date.year, month=1, day=1),
+        )
     current_pb = _number(quote.get("priceToBook"))
     pb_percentile, pb_samples = _historical_pb(pe_prices, annuals, current_pb)
 
@@ -242,6 +265,8 @@ def _calculate_snapshot(
 
     values_for_completeness = [
         current_pe,
+        pe_percentile_ytd,
+        pe_percentile_3y,
         pe_percentile,
         market_cap,
         history_data.get("listing_years"),
@@ -260,6 +285,8 @@ def _calculate_snapshot(
     if is_bank:
         bank_values_for_completeness = [
             current_pe,
+            pe_percentile_ytd,
+            pe_percentile_3y,
             pe_percentile,
             current_pb,
             pb_percentile,
@@ -292,6 +319,8 @@ def _calculate_snapshot(
         market_cap=market_cap,
         avg_turnover_20d=(price * volume if price is not None and volume is not None else None),
         pe_ttm=current_pe,
+        pe_percentile_ytd=pe_percentile_ytd,
+        pe_percentile_3y=pe_percentile_3y,
         pe_percentile_10y=pe_percentile,
         pe_history_samples=pe_samples,
         pb=current_pb,
